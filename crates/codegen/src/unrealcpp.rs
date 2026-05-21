@@ -24,6 +24,7 @@ pub struct UnrealCpp<'opts> {
     pub module_name: &'opts str,
     pub uproject_dir: &'opts Path,
     pub module_prefix: &'opts str,
+    pub generate_subscribe_to_all_tables: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -990,7 +991,12 @@ impl Lang for UnrealCpp<'_> {
         );
 
         // SubscriptionBuilder class
-        generate_subscription_builder_class(&mut client_h, self.module_prefix, &self.get_api_macro());
+        generate_subscription_builder_class(
+            &mut client_h,
+            self.module_prefix,
+            &self.get_api_macro(),
+            self.generate_subscribe_to_all_tables,
+        );
 
         // SubscriptionHandle class
         generate_subscription_handle_class(&mut client_h, self.module_prefix, &self.get_api_macro());
@@ -1073,6 +1079,7 @@ impl Lang for UnrealCpp<'_> {
             options.visibility,
             self.module_prefix,
             self.module_name,
+            self.generate_subscribe_to_all_tables,
         );
         files.push(OutputFile {
             filename: format!(
@@ -2948,7 +2955,12 @@ fn generate_remote_procedures_class(
     writeln!(output);
 }
 
-fn generate_subscription_builder_class(output: &mut UnrealCppAutogen, module_prefix: &str, api_macro: &str) {
+fn generate_subscription_builder_class(
+    output: &mut UnrealCppAutogen,
+    module_prefix: &str,
+    api_macro: &str,
+    generate_subscribe_to_all_tables: bool,
+) {
     writeln!(output, "// SubscriptionBuilder class");
     writeln!(output, "UCLASS(BlueprintType)");
     writeln!(
@@ -2978,16 +2990,24 @@ fn generate_subscription_builder_class(output: &mut UnrealCppAutogen, module_pre
         "    U{module_prefix}SubscriptionHandle* Subscribe(const TArray<FString>& SQL);"
     );
     writeln!(output);
+    writeln!(output, "    UFUNCTION(BlueprintCallable, Category=\"SpacetimeDB\")");
     writeln!(
         output,
-        "    /** Convenience for subscribing to all rows from all tables */"
-    );
-    writeln!(output, "    UFUNCTION(BlueprintCallable, Category = \"SpacetimeDB\")");
-    writeln!(
-        output,
-        "    U{module_prefix}SubscriptionHandle* SubscribeToAllTables();"
+        "    U{module_prefix}SubscriptionHandle* SubscribeBoundedQuerySet(const TArray<FString>& SQL);"
     );
     writeln!(output);
+    if generate_subscribe_to_all_tables {
+        writeln!(
+            output,
+            "    /** Convenience for subscribing to all rows from all tables */"
+        );
+        writeln!(output, "    UFUNCTION(BlueprintCallable, Category = \"SpacetimeDB\")");
+        writeln!(
+            output,
+            "    U{module_prefix}SubscriptionHandle* SubscribeToAllTables();"
+        );
+        writeln!(output);
+    }
     writeln!(output);
     writeln!(output, "    friend class U{module_prefix}DbConnection;");
     writeln!(output, "    friend class UDbConnectionBase;");
@@ -3284,6 +3304,7 @@ fn generate_client_implementation(
     visibility: CodegenVisibility,
     module_prefix: &str,
     module_name: &str,
+    generate_subscribe_to_all_tables: bool,
 ) {
     // U{module_prefix}DbConnection constructor
     writeln!(
@@ -3718,12 +3739,45 @@ fn generate_client_implementation(
     writeln!(output, "}}");
     writeln!(
         output,
-        "U{module_prefix}SubscriptionHandle* U{module_prefix}SubscriptionBuilder::SubscribeToAllTables()"
+        "U{module_prefix}SubscriptionHandle* U{module_prefix}SubscriptionBuilder::SubscribeBoundedQuerySet(const TArray<FString>& SQL)"
     );
     writeln!(output, "{{");
-    writeln!(output, "\treturn Subscribe({{ \"SELECT * FROM * \" }});");
+    writeln!(
+        output,
+        "\tcheckf(!SQL.IsEmpty(), TEXT(\"SubscribeBoundedQuerySet requires at least one bounded SQL query\"));"
+    );
+    writeln!(
+        output,
+        "\tconst FString AllTablesQueryPrefix = FString(TEXT(\"SELECT * FROM \")) + FString(TEXT(\"*\"));"
+    );
+    writeln!(output, "\tfor (const FString& Query : SQL)");
+    writeln!(output, "\t{{");
+    writeln!(output, "\t\tconst FString TrimmedQuery = Query.TrimStartAndEnd();");
+    writeln!(
+        output,
+        "\t\tcheckf(!TrimmedQuery.IsEmpty(), TEXT(\"SubscribeBoundedQuerySet received an empty SQL query\"));"
+    );
+    writeln!(
+        output,
+        "\t\tconst FString UpperQuery = TrimmedQuery.ToUpper();"
+    );
+    writeln!(
+        output,
+        "\t\tcheckf(!UpperQuery.StartsWith(AllTablesQueryPrefix), TEXT(\"SubscribeBoundedQuerySet forbids all-table subscriptions: %s\"), *TrimmedQuery);"
+    );
+    writeln!(output, "\t}}");
+    writeln!(output, "\treturn Subscribe(SQL);");
     writeln!(output, "}}");
-    writeln!(output);
+    if generate_subscribe_to_all_tables {
+        writeln!(
+            output,
+            "U{module_prefix}SubscriptionHandle* U{module_prefix}SubscriptionBuilder::SubscribeToAllTables()"
+        );
+        writeln!(output, "{{");
+        writeln!(output, "\treturn Subscribe({{ \"SELECT * FROM * \" }});");
+        writeln!(output, "}}");
+        writeln!(output);
+    }
     writeln!(
         output,
         "U{module_prefix}SubscriptionHandle::U{module_prefix}SubscriptionHandle(U{module_prefix}DbConnection* InConn)"

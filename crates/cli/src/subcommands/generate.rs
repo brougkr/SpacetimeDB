@@ -49,6 +49,7 @@ fn build_generate_config_schema(command: &clap::Command) -> Result<CommandSchema
         .key(Key::new("namespace").generate_entry_specific())
         .key(Key::new("unreal_module_name").generate_entry_specific())
         .key(Key::new("module_prefix").generate_entry_specific())
+        .key(Key::new("unreal_generate_subscribe_to_all_tables").generate_entry_specific())
         .key(Key::new("build_options").module_specific())
         .key(Key::new("include_private"))
         .exclude("json_module")
@@ -168,7 +169,7 @@ fn get_filtered_generate_configs<'a>(
 pub fn cli() -> clap::Command {
     clap::Command::new("generate")
         .about("Generate client files for a spacetime module.")
-        .override_usage("generate [DATABASE] --lang <LANG> --out-dir <DIR> [--module-path <DIR> | --bin-path <PATH> | --unreal-module-name <MODULE_NAME> | --uproject-dir <DIR> | --include-private]")
+        .override_usage("generate [DATABASE] --lang <LANG> --out-dir <DIR> [--module-path <DIR> | --bin-path <PATH> | --unreal-module-name <MODULE_NAME> | --uproject-dir <DIR> | --unreal-generate-subscribe-to-all-tables <BOOL> | --include-private]")
         .arg(
             Arg::new("database")
                 .help("Database name or glob pattern to filter which databases to generate for"),
@@ -241,6 +242,13 @@ pub fn cli() -> clap::Command {
                 .help("The module prefix to use for generated types (only used with --lang unrealcpp)")
         )
         .arg(
+            Arg::new("unreal_generate_subscribe_to_all_tables")
+                .long("unreal-generate-subscribe-to-all-tables")
+                .value_parser(clap::value_parser!(bool))
+                .default_value("true")
+                .help("Whether Unreal C++ code generation emits USubscriptionBuilder::SubscribeToAllTables().")
+        )
+        .arg(
             Arg::new("lang")
                 .long("lang")
                 .short('l')
@@ -292,6 +300,7 @@ pub struct GenerateRunConfig {
     pub namespace: String,
     pub module_name: Option<String>,
     pub module_prefix: Option<String>,
+    pub unreal_generate_subscribe_to_all_tables: bool,
     pub build_options: String,
     pub out_dir: PathBuf,
     pub include_private: bool,
@@ -321,6 +330,9 @@ fn prepare_generate_run_configs<'a>(
             .unwrap_or_else(|| "SpacetimeDB.Types".to_string());
         let module_name = command_config.get_one::<String>("unreal_module_name")?;
         let module_prefix = command_config.get_one::<String>("module_prefix")?;
+        let unreal_generate_subscribe_to_all_tables = command_config
+            .get_one::<bool>("unreal_generate_subscribe_to_all_tables")?
+            .unwrap_or(true);
         let build_options = command_config
             .get_one::<String>("build_options")?
             .unwrap_or_else(String::new);
@@ -380,6 +392,7 @@ fn prepare_generate_run_configs<'a>(
             namespace,
             module_name,
             module_prefix,
+            unreal_generate_subscribe_to_all_tables,
             build_options,
             out_dir,
             include_private,
@@ -521,6 +534,7 @@ pub async fn run_prepared_generate_configs(
                     module_name: run.module_name.as_ref().unwrap(),
                     uproject_dir: &run.out_dir,
                     module_prefix: run.module_prefix.as_deref().unwrap_or(""),
+                    generate_subscribe_to_all_tables: run.unreal_generate_subscribe_to_all_tables,
                 };
                 &unreal_cpp_lang as &dyn Lang
             }
